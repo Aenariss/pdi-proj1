@@ -1,5 +1,4 @@
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
-from sys import argv
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import max, first, window, collect_list, avg, max_by, element_at, from_json, col
 import time
@@ -78,6 +77,7 @@ class dataDownloader:
             start()
         return query
 
+    # Method to parse the north option. Finds all vehicles heading north (bearing 0-45, 315-360)
     def parseNorth(this, stream):
         # North is 360, with tolerance 45 that is -> <(315 - 45) % 360, 360> or <0, (360 + 45) % 360>
         onlyNorth = stream.filter(col("attributes.bearing").between(0, 45) | col("attributes.bearing").between(315, 360))
@@ -91,7 +91,7 @@ class dataDownloader:
         onlySomeCols = onlySomeCols.drop("first(attributes.delay)")
 
         if this.test:
-            onlySomeCols.show()
+            return onlySomeCols
         else:
             # Output the data every 10s
             # Update means only show those that changed (which is everything because I am using and since I am using lastupdate, I am overwriting them
@@ -99,6 +99,7 @@ class dataDownloader:
             query = this.writeOutput(onlySomeCols, "update")
             query.awaitTermination()
 
+    # Method to parse the trains option. Finds all trains and their latest known stop ID and update time since the start of the app
     def parseTrains(this, stream):
 
         # Find columns with vtype == 5, which means its a train
@@ -107,13 +108,14 @@ class dataDownloader:
         latest = this.getLatestResults(trains, "attributes.laststopid")
 
         if this.test:
-            latest.show()
+            return latest
         else:
             # Complete output, ie. output everything you have, but because I filtered it, it shows only the latest data
             query = this.writeOutput(latest, "complete")
 
             query.awaitTermination()
 
+    # Method to parse the mostdelayed option. Finds the 5 most delayed vehicles since the start of the app
     def parseDelayed(this, stream):
         
         # Latest delay since the app launch
@@ -123,23 +125,33 @@ class dataDownloader:
         latest = latest.orderBy("delay", ascending=False).filter(col("delay") > 0).limit(5)
 
         if this.test:
-            latest.show()
+            return latest
         else:
             # Complete output, ie. output everything you have, but because I filtered it, it shows only the latest data
             query = this.writeOutput(latest, "complete")
 
             query.awaitTermination()
 
-    def parseMostDelayedInLastThreeMinutes(this, stream):
+    # Method to parse the delayed3min option. Find 5 delayed vehicles reported in the last 3 minutes by their lastUpdate value (the most recent is first)
+    def parseDelayedInLastThreeMinutes(this, stream):
         
         # I'd like to convert it to timestamp to use with a window....
         #stream = stream.withColumn("attributes.lastupdate", expr("attributes.lastupdate / 1000"))
         #stream = stream.withColumn("attributes.lastupdate", col("attributes.lastupdate").cast(TimestampType()))
 
-        # Ghetto solution, seems to be working...
-        stream = stream.filter(col("attributes.lastupdate") > (int(time.time()*1000)-60*1000*3)) # 60 * 1000 is 1 minute times 3 is 3 minutes
-        stream = stream.filter(col("delay") > 0) # I only want the delayed
+        if this.test:
+            max_time = int(stream.agg(max("attributes.lastupdate").alias("maxtime")).first()[0]) # doesn't work with streams... nothing does
+            stream = stream.filter(col("attributes.lastupdate") > (max_time - 60*1000*3))
+        
+        else:
+            # Ghetto solution, seems to be working...
+            stream = stream.filter(col("attributes.lastupdate") > (int(time.time()*1000)-60*1000*3)) # 60 * 1000 is 1 minute times 3 is 3 minutes
+        
+        
+        stream = stream.filter(col("attributes.delay") > 0) # I only want the delayed
+
         latest = stream.groupBy("attributes.id").agg(max("attributes.lastupdate").alias("lastupdate"))
+        latest = latest.orderBy("lastupdate", ascending=False).limit(5)
 
         # I'D LIKE TO USE A WINDOW GROUPING HERE BUT I SIMPLY DON'T KNOW HOW. PYSPARK IS TERRIBLE. I DON'T WANT TO USE IT EVER AGAIN. 4 HOURS SPENT ON THIS.
         
@@ -148,16 +160,17 @@ class dataDownloader:
         #latest = stream.orderBy("window", ascending=False).limit(5)
 
         if this.test:
-            latest.show()
+            return latest
         else:
             # Complete output, ie. output everything you have, but because I filtered it, it shows only the latest data
             query = this.writeOutput(latest, "complete")
 
             query.awaitTermination()
 
+    # Method to parse the avgdelay option. Calculates average delay from all reports from the last 3 minutes. 
     def avgDelay(this, stream):
 
-        # Ghetto solution, seems to be working... As in parseMostDelayedInLastThreeMinutes(), I'd like to use a window here... don't know how...
+        # Ghetto solution, seems to be working... As in parseDelayedInLastThreeMinutes(), I'd like to use a window here... don't know how...
         # Latest 3 minutes... relies heavily on the data having synchronized timestamp just as the PC it runs on has
         # Maybe solve this by using windows from MY timestamps I can add to it?
         
@@ -173,17 +186,18 @@ class dataDownloader:
         overall_avg_delay = most_recent.agg(avg("delay").alias("average_delay"))
 
         if this.test:
-            overall_avg_delay.show()
+            return overall_avg_delay
         else:
             # Complete output, ie. output everything you have, but because I filtered it, it shows only the latest data
             query = this.writeOutput(overall_avg_delay, "complete")
 
             query.awaitTermination()
 
+    # Method to parse avganntime option. Calculates average time between reports for the 10 most recent times
     def avgAnnTime(this, stream):
 
         # Grouped by IDs and for each ID corresponding last updates in a list and ordered by latest values and get only 10 latest
-        most_recent = stream.groupBy("attributes.id").agg(collect_list("attributes.lastupdate").alias("lastupdate")).orderBy(element_at(col("lastupdate"), -1)).limit(10) # Should I do this?
+        most_recent = stream.groupBy("attributes.id").agg(collect_list("attributes.lastupdate").alias("lastupdate")).orderBy(element_at(col("lastupdate"), -1)).limit(10)
 
         # Find only the 10 most recent updates, very crude way but I don't know any better
         #only10 = most_recent.select("id", element_at(col("lastupdate"), -1), element_at(col("lastupdate"), -2), 
@@ -203,7 +217,7 @@ class dataDownloader:
         overall_avg = dif.agg(avg("difference").alias("Average time between reports"))
 
         if this.test:
-            overall_avg.show()
+            return overall_avg
         else:
             # Complete output, ie. output everything you have, but because I filtered it, it shows only the latest data
             query = this.writeOutput(overall_avg, "complete")
@@ -235,8 +249,8 @@ class dataDownloader:
         elif this.flag == "mostdelayed":
             this.parseDelayed(parsed_stream)
 
-        elif this.flag == "mostdelayed3min":
-            this.parseMostDelayedInLastThreeMinutes(parsed_stream)
+        elif this.flag == "delayed3min":
+            this.parseDelayedInLastThreeMinutes(parsed_stream)
         
         elif this.flag == "avgdelay":
             this.avgDelay(parsed_stream)
@@ -245,34 +259,96 @@ class dataDownloader:
             this.avgAnnTime(parsed_stream)
 
     def testData(this):
-        spark = SparkSession.builder.appName("PDI Project websocket").getOrCreate()
+        def readFromFile(file):
+            spark = SparkSession.builder.appName("PDI Project websocket").getOrCreate()
+            json_df = spark.read.json(file)
+        
+            # Select only the interesting stuff
+            parsed_stream = json_df.select(from_json(col("value"), this.json_schema).alias("json_data")).select("json_data.attributes")
+
+            # Filter out those that are inactive (isInactive == false)
+            parsed_stream = parsed_stream.filter(col("attributes.isinactive") == "false")
+            return parsed_stream
+
         
         test_folder = "./tests/"
-        json_df = spark.read.json(test_folder + "default.json")
-        
-        # Select only the interesting stuff
-        parsed_stream = json_df.select(from_json(col("value"), this.json_schema).alias("json_data")).select("json_data.attributes")
-
-        # Filter out those that are inactive (isInactive == false)
-        parsed_stream = parsed_stream.filter(col("attributes.isinactive") == "false")
 
         if this.flag == "north": # Vehicles heading north
-            this.parseNorth(parsed_stream)
+            results = this.parseNorth(readFromFile(test_folder + "north.json"))
+            
+            print("RECEIVED:")
+            results.show()
+
+            results = results.collect()
+
+            print("EXPECTED:")
+            # There are only 2 valid vehicles that head north in the file. Check if they're found
+            print("id: 7696 | bearing: 45.0 | lastupdate: 1703383549007")
+            print("id: 7721 | bearing: 0.0 | lastupdate: 1703383549006")
         
         elif this.flag == "trains":
-            this.parseTrains(parsed_stream)
+            results = this.parseTrains(readFromFile(test_folder + "trains.json"))
+            print("RECEIVED:")
+            results.show()
+
+            results = results.collect()
+
+            print("EXPECTED:")
+            # There are 3 train records - two of those are for one train. Checking that only the latest one shows
+            print("id: 30361 | lastupdate: 1703383549009 | laststopid: 1147")
+            print("id: 30363 | lastupdate: 1703383549007 | laststopid: 1286")
         
         elif this.flag == "mostdelayed":
-            this.parseDelayed(parsed_stream)
+            results = this.parseDelayed(readFromFile(test_folder + "mostdelayed.json"))
+            print("RECEIVED:")
+            results.show()
 
-        elif this.flag == "mostdelayed3min":
-            this.parseMostDelayedInLastThreeMinutes(parsed_stream)
+            results = results.collect()
+
+            print("EXPECTED:")
+            # There are many delayed records - 5 most delayed have delay of 50 to 46. Check that only the highest show
+            # There is also one with 100 delay - but its inactive. Check it dosnt show.
+            print("id: 30354 | lastupdate: 1703383549006 | delay: 50.0")
+            print("id: 7721 | lastupdate: 1703383549006 | delay: 49.0")
+            print("id: 7696 | lastupdate: 1703383549007 | delay: 48.0")
+            print("id: 2633 | lastupdate: 1703383549008 | delay: 47.0")
+            print("id: 7700 | lastupdate: 1703383549007 | delay: 46.0")
+
+        elif this.flag == "delayed3min":
+            results = this.parseDelayedInLastThreeMinutes(readFromFile(test_folder + "delayed3min.json"))
+
+            print("RECEIVED:")
+            results.show()
+
+            results = results.collect()
+
+            print("EXPECTED:")
+            # There are many delayed records - when testing, I use the highest timestamp found as current time.
+            # The latest ones should have different ;lastupdate by 30000 each - that means 30 seconds and should end in 9 8 7.
+            # There should be only 3 of them -  the other ones shuld be earlier than 3 minutes before
+            print("id: 30354 | lastupdate: 1703383609009")
+            print("id: 7721 | lastupdate: 1703383579008")
+            print("id: 7696 | lastupdate: 1703383549007")
         
         elif this.flag == "avgdelay":
-            this.avgDelay(parsed_stream)
+            results = this.avgDelay(readFromFile(test_folder + "avgdelay.json"))
+            print("RECEIVED:")
+            results.show()
+
+            print("EXPECTED:")
+            # As in mostdelayed3min, only 3 delays should be valid (in the last 3 minutes), but because I count all, I also add 1 valid 0.0 delay.
+            # Valid delays are 50,49,48, 0 respectively - therefore the average should be 36.75.
+            # There is also 1 with delay 100, but its inactive, so I dont care
+            print("average_delay: 36.75")
         
         elif this.flag == "avganntime":
-            this.avgAnnTime(parsed_stream)
+            results = this.avgAnnTime(readFromFile(test_folder + "avganntime.json"))
+            print("RECEIVED:")
+            results.show()
+
+            print("EXPECTED:")
+            # I have only 8 reports - 4 unique repeated twice with a difference of 10 000. That will be my average time between announcements.
+            print("Average_time_between_reports: 10000.0")
 
     async def performOperation(this):
         if this.test:
@@ -294,7 +370,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--port", action="store", default="9999", help="port where redirected websocket is", type=int)
     parser.add_argument("-t", "--test", action="store_true", help="whether to launch tests or not")
-    parser.add_argument("-m", "--mode", help="operation to perform (refer to README)", choices=["north", "trains", "mostdelayed", "mostdelayed3min", "avgdelay", "avganntime"])
+    parser.add_argument("-m", "--mode", help="operation to perform (refer to README)", choices=["north", "trains", "mostdelayed", "delayed3min", "avgdelay", "avganntime"])
     args = parser.parse_args()
 
     asyncio.run(run(args))

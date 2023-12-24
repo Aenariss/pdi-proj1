@@ -1,10 +1,14 @@
+"""
+PDI Projekt 2023 - pomocný server na zpracování websocketu.
+Author: Vojtěch Fiala \<xfiala61\>
+"""
+
 import websockets
 import asyncio
 import socket
 import base64
 import secrets
 import argparse
-import select
 
 class Redirecter:
     stream_link = "wss://gis.brno.cz/geoevent/ws/services/ODAE_public_transit_stream/StreamServer/subscribe?outSR=4326"

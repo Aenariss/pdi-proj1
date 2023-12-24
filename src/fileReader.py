@@ -1,3 +1,8 @@
+"""
+PDI Projekt 2023 - ArcGIS stream.
+Author: Vojtěch Fiala \<xfiala61\>
+"""
+
 from time import sleep, time
 import os
 from pyspark.sql import SparkSession
