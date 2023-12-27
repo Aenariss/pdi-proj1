@@ -5,8 +5,6 @@ import time
 import asyncio
 import argparse
 
-from redirectToLocalhost import Redirecter
-
 class dataDownloader:
     test = False
     flag = "north"
@@ -40,7 +38,8 @@ class dataDownloader:
         ]))
     ])
     
-    def __init__(this, port, flag, test=False):
+    def __init__(this, host, port, flag, test=False):
+        this.host = host
         this.port = port
         this.test = test
         this.flag = flag
@@ -172,7 +171,7 @@ class dataDownloader:
 
         # Ghetto solution, seems to be working... As in parseDelayedInLastThreeMinutes(), I'd like to use a window here... don't know how...
         # Latest 3 minutes... relies heavily on the data having synchronized timestamp just as the PC it runs on has
-        # Maybe solve this by using windows from MY timestamps I can add to it?
+        # Maybe solve this by using windows from MY timestamps I can add to it? But that wouldn't be much different from doing what I already am
         
         if this.test:
             max_time = int(stream.agg(max("attributes.lastupdate").alias("maxtime")).first()[0]) # doesn't work with streams... nothing does
@@ -231,7 +230,7 @@ class dataDownloader:
             spark = SparkSession.builder.appName("PDI Project websocket").getOrCreate()
 
         # Connect to my local stream
-        stream = spark.readStream.format("socket").option("host", "localhost").option("port", this.port).load()
+        stream = spark.readStream.format("socket").option("host", this.host).option("port", this.port).load()
 
         # Parse the data as JSON using a given schema
         parsed_stream = stream.select(from_json(col("value"), this.json_schema).alias("json_data")).select("json_data.attributes")
@@ -362,13 +361,14 @@ async def run(args):
         print("You must choose a mode using the --mode parameter! Refer to README!")
         exit(1)
 
-    a = dataDownloader(port=args.port, test=args.test, flag=args.mode)
+    a = dataDownloader(host=args.host, port=args.port, test=args.test, flag=args.mode)
     asyncio.create_task(a.performOperation())
 
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--port", action="store", default="9999", help="port where redirected websocket is", type=int)
+    parser.add_argument("-s", "--host", action="store", default="localhost", help="host where redirected websocket is")
     parser.add_argument("-t", "--test", action="store_true", help="whether to launch tests or not")
     parser.add_argument("-m", "--mode", help="operation to perform (refer to README)", choices=["north", "trains", "mostdelayed", "delayed3min", "avgdelay", "avganntime"])
     args = parser.parse_args()

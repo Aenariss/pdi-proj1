@@ -2,11 +2,6 @@
 ### Zpracování proudu dat ArcGIS Stream Services z dopravy IDSJMK pomocí Apache Spark
 ### Autor: Vojtěch Fiala \<xfiala61\>
 
-
-# todo:
-# pripadne window pomoci custom timestamp
-# vyzkouset na virtualce na endeavoru a nasadit na spark cluster
-
 Aplikace byla vyvíjena na Pythonu 3.10.12. Na ostatních verzích není funkčnost zaručena, ale neměl by teoreticky být problém.
 Pro stáhnutí požadovaných knihoven je možné použít soubor `requirements.txt` s využitím PIPu, pip install -r requirements.txt
 
@@ -28,12 +23,14 @@ Jednotlivé možnosti jsou:
 * --mode avgdelay -> Vypisuje průměrné zpoždění všech vozů za poslední 3 minuty.
 * --mode avganntime -> Vypisuje průměrnou dobu mezi hlášeními, kterou počítá z 10 nejnovějších hlášení.
 
-Pro spuštění testů je možné využít parametr --test | -t. Testy vycházejí ze souborů ve složce tests/, kde vypíšou svůj výsledek a zároveň očekáváný výsledek.
-Soubory ve složce tests/ vycházejí z reálně zachycené komunikace (uložena v tests/default.json), ze které byly vybírány menší kusy dat, které byly dále upraveny pro účely testů.
-Testy je možné spouštět i přímo s využitím `python3 ./src/dataDownloader.py --test --mode <mode>`
+Pro spuštění testů je možné využít parametr --test | -t. Více viz TESTING.md
 
 Pokud mají být data čtena "živě", stačí vynechat parametr --test a použít `./run.sh --mode <mode>`.
 
 Použité knihovny mimo standardní jsou:
 websockets - licencováno pod BSD License - https://pypi.org/project/websockets/.
 pyspark - licencováno pod Apache Software License - https://pypi.org/project/pyspark/.
+
+# todo vyzkouset, ze nejaka example aplikace na clusteru funguje s vyuzitim netcatu, jeslti vubec neco fungovat bude (s live vystupem)
+# vyzkouset ze vubec funguje normalne ta appka, ne jen na clsuteru -- NEFUNGUJE, neni to moej chyba a odevzdavam jak to je :relieved:
+# zkusit udelat standalone cluster na Mintu a otestovat tam
